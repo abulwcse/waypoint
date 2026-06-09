@@ -1,0 +1,19 @@
+# Binaries
+/bin/
+/waypoint
+
+# Frontend build artifacts / deps
+web/node_modules/
+web/dist/
+
+# Env / secrets
+.env
+
+# OS / editor
+.DS_Store
+.idea/
+.claude/
+
+# Go
+*.test
+*.out
