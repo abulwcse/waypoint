@@ -1,0 +1,12 @@
+# Rebuilt inside the image — never copy these from the host.
+web/node_modules
+web/dist
+bin
+# Repo / local cruft
+.git
+.gitignore
+.idea
+.DS_Store
+*.log
+.env
+README.md

@@ -1,0 +1,15 @@
+# Render Blueprint — deploys waypoint as a free Docker web service.
+# Push this repo to GitHub, then in Render: New → Blueprint → pick the repo.
+# Render builds the Dockerfile, injects $PORT, and gives you a public URL.
+services:
+  - type: web
+    name: waypoint
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/types
+    envVars:
+      # Free, keyless OpenStreetMap stack. To use Google instead, set this to
+      # "google" and add GOOGLE_MAPS_API_KEY in the Render dashboard.
+      - key: MAPS_PROVIDER
+        value: osm
