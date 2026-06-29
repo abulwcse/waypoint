@@ -1,5 +1,10 @@
 # waypoint
 
+[![CI](https://github.com/abulwcse/waypoint/actions/workflows/ci.yml/badge.svg)](https://github.com/abulwcse/waypoint/actions/workflows/ci.yml)
+
+**🌍 Live demo: https://waypoint-c72m.onrender.com/**
+_(free Render instance — the first request after it's been idle may take ~30s to wake up)_
+
 A route-aware pit-stop planner. Give it a start, an end, when you're leaving,
 and the times you want to stop — it works out **where you'll be at each time**
 and finds the kinds of places you choose nearby: **masjids, toilets,
@@ -131,6 +136,8 @@ the Go binary into a small runtime image that works on any container host.
 1. Push this repo to GitHub.
 2. In [Render](https://render.com): **New → Blueprint**, pick the repo. It reads
    `render.yaml`, builds the `Dockerfile`, and gives you a public URL.
+
+   A live instance built this way runs at <https://waypoint-c72m.onrender.com/>.
 
 The free instance sleeps after ~15 min idle (≈30s cold start). It also works
 as-is on **Koyeb**, **Fly.io**, or **Google Cloud Run** — they all build the
