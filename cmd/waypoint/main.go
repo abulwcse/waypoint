@@ -16,6 +16,7 @@ import (
 	"github.com/abulhassan/waypoint/internal/maps"
 	"github.com/abulhassan/waypoint/internal/poi"
 	"github.com/abulhassan/waypoint/internal/trip"
+	"github.com/abulhassan/waypoint/internal/weather"
 )
 
 func main() {
@@ -65,7 +66,8 @@ func run() error {
 	}
 
 	ctx := context.Background()
-	result, err := trip.New(client).Plan(ctx, trip.Request{
+	free := trip.Tier{Maps: client, Weather: weather.New()}
+	result, err := trip.New(free, nil).Plan(ctx, trip.Request{
 		From:       *from,
 		To:         *to,
 		Depart:     departure,
@@ -96,6 +98,10 @@ func printResult(r *trip.Result) {
 		fmt.Printf("\n──────────────────────────────────────────────\n")
 		fmt.Printf("⏱  %s  (%s into the trip)\n", stop.At.Format("15:04"), fmtMin(stop.OffsetMin))
 		fmt.Printf("📍 estimated position: %.5f, %.5f\n", stop.Lat, stop.Lng)
+		if w := stop.Weather; w != nil {
+			fmt.Printf("%s %s, %.0f°C (feels like %.0f°C), %d%% chance of precipitation\n",
+				w.Icon, w.Description, w.TempC, w.FeelsLikeC, w.PrecipPercent)
+		}
 		for _, cat := range stop.Categories {
 			fmt.Printf("\n  %s:\n", cat.Label)
 			if len(cat.Places) == 0 {

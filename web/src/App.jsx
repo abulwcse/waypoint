@@ -1,5 +1,7 @@
-import { useEffect, useId, useRef, useState } from 'react'
-import { fetchTypes, planTrip, suggestPlaces } from './api.js'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { fetchMapConfig, fetchMe, fetchTypes, planTrip, signInWithGoogle, signOut, suggestPlaces } from './api.js'
+import MapView from './maps/MapView.jsx'
+import GoogleSignIn from './auth/GoogleSignIn.jsx'
 
 const DEFAULT_TYPES = ['masjid', 'toilet', 'restaurant']
 
@@ -19,6 +21,10 @@ export default function App() {
   const [error, setError] = useState('')
   const [result, setResult] = useState(null)
 
+  const [config, setConfig] = useState(null)
+  const [user, setUser] = useState(null)
+  const [pro, setPro] = useState(false)
+
   useEffect(() => {
     fetchTypes()
       .then((opts) => {
@@ -29,6 +35,21 @@ export default function App() {
       .catch((e) => setError(e.message))
   }, [])
 
+  useEffect(() => {
+    fetchMapConfig().then(setConfig).catch(() => {})
+    fetchMe().then(setUser).catch(() => {})
+  }, [])
+
+  const handleCredential = useCallback((credential) => {
+    signInWithGoogle(credential).then(setUser).catch((e) => setError(e.message))
+  }, [])
+
+  async function handleSignOut() {
+    await signOut()
+    setUser(null)
+    setPro(false)
+  }
+
   function toggleType(alias) {
     setSelected((prev) => {
       const next = new Set(prev)
@@ -36,6 +57,8 @@ export default function App() {
       return next
     })
   }
+
+  const isPro = pro && !!user
 
   async function onSubmit(e) {
     e.preventDefault()
@@ -60,6 +83,7 @@ export default function App() {
       top: Number(top),
       at: mode === 'at' ? at.split(',').map((s) => s.trim()).filter(Boolean) : [],
       every: mode === 'every' ? every : '',
+      pro: isPro,
     }
 
     setLoading(true)
@@ -75,14 +99,26 @@ export default function App() {
   return (
     <div className="page">
       <header className="hero">
-        <h1>🧭 waypoint</h1>
-        <p>Plan stops along your route — find a masjid, toilet, restaurant, pharmacy and more, right when you'll be passing.</p>
+        <div className="hero-top">
+          <div>
+            <h1>🧭 waypoint</h1>
+            <p>Plan stops along your route — find a masjid, toilet, restaurant, pharmacy and more, right when you'll be passing.</p>
+          </div>
+          <AuthArea
+            config={config}
+            user={user}
+            pro={pro}
+            onProChange={setPro}
+            onCredential={handleCredential}
+            onSignOut={handleSignOut}
+          />
+        </div>
       </header>
 
       <form className="card form" onSubmit={onSubmit}>
         <div className="row">
-          <CityInput label="From" value={from} onChange={setFrom} placeholder="Manchester, UK" />
-          <CityInput label="To" value={to} onChange={setTo} placeholder="London, UK" />
+          <CityInput label="From" value={from} onChange={setFrom} placeholder="Manchester, UK" pro={isPro} />
+          <CityInput label="To" value={to} onChange={setTo} placeholder="London, UK" pro={isPro} />
         </div>
 
         <div className="row">
@@ -145,7 +181,37 @@ export default function App() {
 
       {error && <div className="card error">⚠️ {error}</div>}
 
-      {result && <Results result={result} />}
+      {result && <Results result={result} config={config} />}
+    </div>
+  )
+}
+
+// AuthArea shows a "Sign in with Google" button when signed out, or the
+// user's name/avatar plus (when the server has a pro tier configured) a Pro
+// toggle when signed in. There's no real subscription check behind the
+// toggle — see cmd/server/main.go's package doc.
+function AuthArea({ config, user, pro, onProChange, onCredential, onSignOut }) {
+  if (!config?.googleClientId) return null
+
+  if (!user) {
+    return (
+      <div className="auth-area">
+        <GoogleSignIn clientId={config.googleClientId} onCredential={onCredential} />
+      </div>
+    )
+  }
+
+  return (
+    <div className="auth-area signed-in">
+      {config.proAvailable && (
+        <label className="pro-toggle">
+          <input type="checkbox" checked={pro} onChange={(e) => onProChange(e.target.checked)} />
+          <span>Pro</span>
+        </label>
+      )}
+      {user.picture && <img className="avatar" src={user.picture} alt="" referrerPolicy="no-referrer" />}
+      <span className="muted">{user.name || user.email}</span>
+      <button type="button" className="link-button" onClick={onSignOut}>Sign out</button>
     </div>
   )
 }
@@ -153,7 +219,7 @@ export default function App() {
 // CityInput is a text field with debounced place-name autocomplete, backed by
 // /api/suggest. It renders a native <datalist> so the dropdown, filtering, and
 // keyboard handling come for free.
-function CityInput({ label, value, onChange, placeholder }) {
+function CityInput({ label, value, onChange, placeholder, pro }) {
   const [options, setOptions] = useState([])
   const listId = useId()
   const lastQuery = useRef('')
@@ -167,10 +233,10 @@ function CityInput({ label, value, onChange, placeholder }) {
 
     const timer = setTimeout(() => {
       lastQuery.current = q
-      suggestPlaces(q).then(setOptions).catch(() => {})
+      suggestPlaces(q, pro).then(setOptions).catch(() => {})
     }, 300)
     return () => clearTimeout(timer)
-  }, [value]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [value, pro]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <label className="field">
@@ -189,15 +255,22 @@ function CityInput({ label, value, onChange, placeholder }) {
   )
 }
 
-function Results({ result }) {
+function Results({ result, config }) {
   return (
     <div className="results">
       <div className="card summary">
-        <h2>{result.summary || 'Your route'}</h2>
+        <h2>
+          {result.summary || 'Your route'}
+          {result.tier === 'pro' && <span className="tier-badge">Pro</span>}
+        </h2>
         <p>
           {result.distanceKm.toFixed(0)} km · ~{fmtMin(result.durationMin)} · depart{' '}
           {fmtTime(result.depart)} → arrive ~{fmtTime(result.arrive)}
         </p>
+      </div>
+
+      <div className="card map-card">
+        <MapView result={result} config={config} />
       </div>
 
       {result.stops.length === 0 && (
@@ -208,6 +281,13 @@ function Results({ result }) {
         <div className="card stop" key={i}>
           <div className="stop-head">
             <span className="time">⏱ {fmtTime(stop.at)}</span>
+            {stop.weather && (
+              <span className="weather" title={weatherTitle(stop.weather)}>
+                {stop.weather.icon} {Math.round(stop.weather.tempC)}°C
+                {stop.weather.precipPercent > 0 && <> · 💧{stop.weather.precipPercent}%</>}
+                {stop.weather.humidityPct != null && <> · 💦{stop.weather.humidityPct}%</>}
+              </span>
+            )}
             <span className="muted">{fmtMin(stop.offsetMin)} into the trip · {stop.lat.toFixed(4)}, {stop.lng.toFixed(4)}</span>
           </div>
           {stop.categories.map((cat) => (
@@ -257,4 +337,15 @@ function fmtMin(min) {
   const h = Math.floor(min / 60)
   const m = min % 60
   return h > 0 ? `${h}h${String(m).padStart(2, '0')}m` : `${m}m`
+}
+
+// weatherTitle builds the hover tooltip for a stop's weather badge. The extra
+// fields (UV index, visibility) only come from the pro (OpenWeatherMap)
+// provider — see internal/weather.Conditions — so they're omitted for free.
+function weatherTitle(w) {
+  const parts = [w.description, `feels like ${Math.round(w.feelsLikeC)}°C`, `wind ${Math.round(w.windKph)} km/h`]
+  if (w.uvIndex != null) parts.push(`UV ${w.uvIndex.toFixed(1)}`)
+  if (w.visibilityKm != null) parts.push(`visibility ${w.visibilityKm.toFixed(1)} km`)
+  parts.push(`source: ${w.source}`)
+  return parts.join(' · ')
 }

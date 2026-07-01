@@ -70,7 +70,8 @@ func (p *Provider) Route(ctx context.Context, origin, destination string, _ time
 
 	// OSRM wants lon,lat order. steps=true + geojson geometry gives us per-step
 	// start/end coordinates, which the planner interpolates between.
-	u := fmt.Sprintf("%s/route/v1/driving/%f,%f;%f,%f?overview=false&steps=true&geometries=geojson",
+	// overview=full additionally gives the full route line, for drawing on a map.
+	u := fmt.Sprintf("%s/route/v1/driving/%f,%f;%f,%f?overview=full&steps=true&geometries=geojson",
 		strings.TrimRight(p.osrm, "/"), from.Lng, from.Lat, to.Lng, to.Lat)
 
 	var resp osrmResponse
@@ -109,6 +110,15 @@ func (p *Provider) Route(ctx context.Context, origin, destination string, _ time
 	route.Summary = strings.Join(dedupe(summaries), ", ")
 	if route.Summary == "" {
 		route.Summary = "via OpenStreetMap"
+	}
+	if coords := r.Geometry.Coordinates; len(coords) > 0 {
+		path := make([]gmaps.LatLng, len(coords))
+		for i, c := range coords {
+			path[i] = lonLat(c)
+		}
+		// Re-encode with Google's polyline algorithm so the frontend can decode
+		// the route line the same way regardless of which adapter served it.
+		route.OverviewPolyline.Points = gmaps.Encode(path)
 	}
 	return route, nil
 }
@@ -404,6 +414,9 @@ func envOr(key, fallback string) string {
 type osrmResponse struct {
 	Code   string `json:"code"`
 	Routes []struct {
+		Geometry struct {
+			Coordinates [][]float64 `json:"coordinates"`
+		} `json:"geometry"`
 		Legs []struct {
 			Summary  string  `json:"summary"`
 			Distance float64 `json:"distance"`

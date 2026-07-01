@@ -2,14 +2,28 @@
 //
 // Endpoints:
 //
-//	GET  /api/types  → the selectable place categories
-//	POST /api/plan   → plan a journey (JSON body, see planRequest)
+//	GET  /api/config       → map/auth/pro-tier configuration for the frontend
+//	GET  /api/types        → the selectable place categories
+//	GET  /api/suggest      → place-name autocomplete
+//	POST /api/plan         → plan a journey (JSON body, see planRequest)
+//	POST /api/auth/google  → sign in with a Google ID token, sets a session cookie
+//	GET  /api/auth/me      → the current session's identity, if signed in
+//	POST /api/auth/logout  → clear the session cookie
+//
+// Free by default: the app runs on OSM + Open-Meteo (see internal/maps/osm,
+// internal/weather) with no keys needed. If GOOGLE_MAPS_API_KEY and
+// OPENWEATHERMAP_API_KEY are both set, a "pro" tier (Google Maps +
+// OpenWeatherMap) becomes available to signed-in users — see internal/trip's
+// Tier type. There is no real subscription/billing check: any signed-in user
+// can request the pro tier, which is a deliberate demo simplification (see
+// README).
 //
 // If ./web/dist exists, it is served as a single-page app at /.
 package main
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -18,13 +32,22 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/abulhassan/waypoint/internal/auth"
 	"github.com/abulhassan/waypoint/internal/config"
 	"github.com/abulhassan/waypoint/internal/maps"
+	"github.com/abulhassan/waypoint/internal/maps/google"
 	"github.com/abulhassan/waypoint/internal/poi"
 	"github.com/abulhassan/waypoint/internal/trip"
+	"github.com/abulhassan/waypoint/internal/weather"
+	"github.com/abulhassan/waypoint/internal/weather/openweather"
 )
+
+// sessionTTL is how long a signed-in session lasts before requiring sign-in
+// again.
+const sessionTTL = 30 * 24 * time.Hour
 
 func main() {
 	if err := run(); err != nil {
@@ -40,13 +63,27 @@ func run() error {
 	if _, err := config.Load(); err != nil { // loads optional .env (endpoint overrides)
 		return err
 	}
-	client, err := maps.New()
+
+	freeMaps, err := maps.New()
 	if err != nil {
 		return err
 	}
-	srv := &server{planner: trip.New(client)}
+	pro := proTier()
+	srv := &server{
+		planner:        trip.New(trip.Tier{Maps: freeMaps, Weather: weather.New()}, pro),
+		proAvailable:   pro != nil,
+		googleClientID: os.Getenv("GOOGLE_CLIENT_ID"),
+		sessionSecret:  sessionSecret(),
+	}
+	if srv.googleClientID != "" {
+		srv.googleVerifier = auth.NewGoogleVerifier(srv.googleClientID)
+	}
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("/api/config", srv.handleConfig)
+	mux.HandleFunc("/api/auth/google", srv.handleAuthGoogle)
+	mux.HandleFunc("/api/auth/me", srv.handleAuthMe)
+	mux.HandleFunc("/api/auth/logout", srv.handleAuthLogout)
 	mux.HandleFunc("/api/types", srv.handleTypes)
 	mux.HandleFunc("/api/suggest", srv.handleSuggest)
 	mux.HandleFunc("/api/plan", srv.handlePlan)
@@ -61,8 +98,143 @@ func run() error {
 	return httpSrv.ListenAndServe()
 }
 
+// proTier builds the pro (Google Maps + OpenWeatherMap) tier if both
+// GOOGLE_MAPS_API_KEY and OPENWEATHERMAP_API_KEY are configured; otherwise it
+// returns nil and the server runs free-tier only.
+func proTier() *trip.Tier {
+	mapsKey := os.Getenv("GOOGLE_MAPS_API_KEY")
+	weatherKey := os.Getenv("OPENWEATHERMAP_API_KEY")
+	if mapsKey == "" || weatherKey == "" {
+		return nil
+	}
+	client, err := google.New(mapsKey)
+	if err != nil {
+		log.Printf("pro tier disabled: %v", err)
+		return nil
+	}
+	return &trip.Tier{Maps: client, Weather: openweather.New(weatherKey)}
+}
+
+// sessionSecret reads SESSION_SECRET, or falls back to a random secret for
+// this process's lifetime — sessions just won't survive a restart, which is
+// fine for a demo deployment but worth flagging.
+func sessionSecret() []byte {
+	if s := os.Getenv("SESSION_SECRET"); s != "" {
+		return []byte(s)
+	}
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		log.Fatalf("could not generate a session secret: %v", err)
+	}
+	log.Println("SESSION_SECRET not set; using a random secret for this process (signed-in sessions won't survive a restart)")
+	return b
+}
+
 type server struct {
-	planner *trip.Planner
+	planner        *trip.Planner
+	googleVerifier *auth.GoogleVerifier // nil if GOOGLE_CLIENT_ID isn't configured
+	sessionSecret  []byte
+	googleClientID string
+	proAvailable   bool
+}
+
+// mapConfig tells the frontend which map renderer the free tier uses, whether
+// the pro tier (always Google-backed) is available, and the IDs/keys needed
+// to load Google Identity Services and the Google Maps JavaScript API in the
+// browser. googleMapsBrowserKey is deliberately a separate key from
+// GOOGLE_MAPS_API_KEY (used server-side for Directions/Places) — set
+// GOOGLE_MAPS_BROWSER_KEY to a key restricted by HTTP referrer.
+type mapConfig struct {
+	FreeProvider         string `json:"freeProvider"`
+	ProAvailable         bool   `json:"proAvailable"`
+	GoogleClientID       string `json:"googleClientId,omitempty"`
+	GoogleMapsBrowserKey string `json:"googleMapsBrowserKey,omitempty"`
+}
+
+func (s *server) handleConfig(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "use GET")
+		return
+	}
+	cfg := mapConfig{
+		FreeProvider:   maps.ResolvedName(),
+		ProAvailable:   s.proAvailable,
+		GoogleClientID: s.googleClientID,
+	}
+	if cfg.FreeProvider == "google" || s.proAvailable {
+		cfg.GoogleMapsBrowserKey = envOr("GOOGLE_MAPS_BROWSER_KEY", os.Getenv("GOOGLE_MAPS_API_KEY"))
+	}
+	writeJSON(w, http.StatusOK, cfg)
+}
+
+// authUser is what the frontend gets back for both sign-in and "who am I".
+type authUser struct {
+	Email   string `json:"email"`
+	Name    string `json:"name"`
+	Picture string `json:"picture"`
+}
+
+func (s *server) handleAuthGoogle(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "use POST")
+		return
+	}
+	if s.googleVerifier == nil {
+		writeError(w, http.StatusServiceUnavailable, "sign-in is not configured on this server")
+		return
+	}
+	var body struct {
+		Credential string `json:"credential"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&body); err != nil || body.Credential == "" {
+		writeError(w, http.StatusBadRequest, "missing credential")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	user, err := s.googleVerifier.Verify(ctx, body.Credential)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "sign-in failed: "+err.Error())
+		return
+	}
+
+	sess := auth.Session{Email: user.Email, Name: user.Name, Picture: user.Picture}
+	if err := auth.SetSessionCookie(w, s.sessionSecret, sess, sessionTTL, isSecure(r)); err != nil {
+		writeError(w, http.StatusInternalServerError, "could not start session")
+		return
+	}
+	writeJSON(w, http.StatusOK, authUser{Email: sess.Email, Name: sess.Name, Picture: sess.Picture})
+}
+
+func (s *server) handleAuthMe(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "use GET")
+		return
+	}
+	sess, err := auth.ReadSession(r, s.sessionSecret)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "not signed in")
+		return
+	}
+	writeJSON(w, http.StatusOK, authUser{Email: sess.Email, Name: sess.Name, Picture: sess.Picture})
+}
+
+func (s *server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "use POST")
+		return
+	}
+	auth.ClearSessionCookie(w, isSecure(r))
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// signedIn reports whether r carries a valid session cookie. It's used to
+// gate the pro tier server-side — the "pro" flag alone isn't trusted, since a
+// signed-out client could otherwise spoof it to reach the paid backends.
+func (s *server) signedIn(r *http.Request) bool {
+	_, err := auth.ReadSession(r, s.sessionSecret)
+	return err == nil
 }
 
 func (s *server) handleTypes(w http.ResponseWriter, r *http.Request) {
@@ -81,7 +253,8 @@ func (s *server) handleSuggest(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
 
-	out, err := s.planner.Suggest(ctx, r.URL.Query().Get("q"))
+	pro := r.URL.Query().Get("pro") == "true" && s.signedIn(r)
+	out, err := s.planner.Suggest(ctx, r.URL.Query().Get("q"), pro)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
@@ -101,6 +274,7 @@ type planRequest struct {
 	Types  []string `json:"types"`
 	Radius uint     `json:"radius"`
 	Top    int      `json:"top"`
+	Pro    bool     `json:"pro"`
 }
 
 func (s *server) handlePlan(w http.ResponseWriter, r *http.Request) {
@@ -118,6 +292,9 @@ func (s *server) handlePlan(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
+	}
+	if req.Pro && !s.signedIn(r) {
+		req.Pro = false // pro requires being signed in; silently fall back rather than erroring
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
@@ -160,6 +337,7 @@ func buildRequest(body planRequest) (trip.Request, error) {
 		Categories: cats,
 		Radius:     body.Radius,
 		Top:        body.Top,
+		Pro:        body.Pro,
 	}, nil
 }
 
@@ -191,6 +369,15 @@ func cors(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// isSecure reports whether the request arrived over HTTPS, directly or via a
+// reverse proxy (Render and similar hosts terminate TLS in front of the app
+// and forward this header). The session cookie's Secure flag depends on it —
+// hardcoding Secure=true would make sign-in silently fail over plain-HTTP
+// local development.
+func isSecure(r *http.Request) bool {
+	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

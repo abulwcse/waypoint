@@ -13,6 +13,7 @@ import (
 	"github.com/abulhassan/waypoint/internal/maps"
 	"github.com/abulhassan/waypoint/internal/planner"
 	"github.com/abulhassan/waypoint/internal/poi"
+	"github.com/abulhassan/waypoint/internal/weather"
 	gmaps "googlemaps.github.io/maps"
 )
 
@@ -22,11 +23,12 @@ type Request struct {
 	From       string
 	To         string
 	Depart     time.Time
-	Targets    []time.Time     // explicit clock times to stop at
-	Every      time.Duration   // if > 0, generate targets on this interval
-	Categories []poi.Category  // place types to search for
-	Radius     uint            // metres
-	Top        int             // max results per category per stop
+	Targets    []time.Time    // explicit clock times to stop at
+	Every      time.Duration  // if > 0, generate targets on this interval
+	Categories []poi.Category // place types to search for
+	Radius     uint           // metres
+	Top        int            // max results per category per stop
+	Pro        bool           // use the pro tier (Google Maps + OpenWeatherMap) if available
 }
 
 // Result is the full plan, in a form that's easy to print or marshal to JSON.
@@ -36,17 +38,28 @@ type Result struct {
 	DurationMin int       `json:"durationMin"`
 	Depart      time.Time `json:"depart"`
 	Arrive      time.Time `json:"arrive"`
+	Origin      LatLng    `json:"origin"`
+	Destination LatLng    `json:"destination"`
+	Polyline    string    `json:"polyline"` // route line, Google polyline algorithm encoding
+	Tier        string    `json:"tier"`     // "free" or "pro" — which backends actually served this plan
 	Stops       []Stop    `json:"stops"`
 	Suggestions []string  `json:"suggestions"`
 }
 
+// LatLng is a coordinate pair, in a form that's easy to marshal to JSON.
+type LatLng struct {
+	Lat float64 `json:"lat"`
+	Lng float64 `json:"lng"`
+}
+
 // Stop is one planned stop along the route, with the places found near it.
 type Stop struct {
-	At         time.Time  `json:"at"`
-	OffsetMin  int        `json:"offsetMin"`
-	Lat        float64    `json:"lat"`
-	Lng        float64    `json:"lng"`
-	Categories []CatBlock `json:"categories"`
+	At         time.Time           `json:"at"`
+	OffsetMin  int                 `json:"offsetMin"`
+	Lat        float64             `json:"lat"`
+	Lng        float64             `json:"lng"`
+	Weather    *weather.Conditions `json:"weather,omitempty"`
+	Categories []CatBlock          `json:"categories"`
 }
 
 // CatBlock groups the places found for one category at a stop.
@@ -63,21 +76,42 @@ type Place struct {
 	OpenNow    *bool   `json:"openNow"`
 	DistanceKm float64 `json:"distanceKm"`
 	MapsURL    string  `json:"mapsUrl"`
+	Lat        float64 `json:"lat"`
+	Lng        float64 `json:"lng"`
 }
 
-// Planner runs trips against a maps provider (OSM or Google — see package maps).
+// Tier bundles the maps and weather backends for one service level.
+type Tier struct {
+	Maps    maps.Provider
+	Weather weather.Provider // may be nil, in which case stops carry no Weather field
+}
+
+// Planner runs trips against a free tier (OSM + Open-Meteo by default) and,
+// optionally, a pro tier (Google Maps + OpenWeatherMap) for signed-in pro
+// users. A request only gets the pro tier if it asks for it and the server
+// has one configured; otherwise it silently falls back to free.
 type Planner struct {
-	client maps.Provider
+	free Tier
+	pro  *Tier
 }
 
-// New builds a Planner backed by the given maps provider.
-func New(client maps.Provider) *Planner {
-	return &Planner{client: client}
+// New builds a Planner. pro may be nil if the server has no pro backends
+// configured (e.g. missing GOOGLE_MAPS_API_KEY / OPENWEATHERMAP_API_KEY).
+func New(free Tier, pro *Tier) *Planner {
+	return &Planner{free: free, pro: pro}
 }
 
 // Suggest returns place-name completions for a partial query (type-ahead).
-func (p *Planner) Suggest(ctx context.Context, query string) ([]string, error) {
-	return p.client.Suggest(ctx, query)
+func (p *Planner) Suggest(ctx context.Context, query string, pro bool) ([]string, error) {
+	return p.tier(pro).Maps.Suggest(ctx, query)
+}
+
+// tier picks the pro tier if requested and configured, else the free tier.
+func (p *Planner) tier(pro bool) Tier {
+	if pro && p.pro != nil {
+		return *p.pro
+	}
+	return p.free
 }
 
 // Plan executes the full journey plan.
@@ -95,7 +129,13 @@ func (p *Planner) Plan(ctx context.Context, req Request) (*Result, error) {
 		req.Top = 3
 	}
 
-	route, err := p.client.Route(ctx, req.From, req.To, req.Depart)
+	tier := p.tier(req.Pro)
+	tierName := "free"
+	if req.Pro && p.pro != nil {
+		tierName = "pro"
+	}
+
+	route, err := tier.Maps.Route(ctx, req.From, req.To, req.Depart)
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +157,15 @@ func (p *Planner) Plan(ctx context.Context, req Request) (*Result, error) {
 		DurationMin: int(total.Round(time.Minute) / time.Minute),
 		Depart:      req.Depart,
 		Arrive:      req.Depart.Add(total),
+		Polyline:    route.OverviewPolyline.Points,
+		Tier:        tierName,
 		Stops:       make([]Stop, 0, len(stops)),
+	}
+	if loc, ok := planner.LocationAt(route, 0); ok {
+		res.Origin = LatLng{Lat: loc.Lat, Lng: loc.Lng}
+	}
+	if loc, ok := planner.LocationAt(route, total); ok {
+		res.Destination = LatLng{Lat: loc.Lat, Lng: loc.Lng}
 	}
 
 	for _, s := range stops {
@@ -128,7 +176,7 @@ func (p *Planner) Plan(ctx context.Context, req Request) (*Result, error) {
 			Lng:       s.Location.Lng,
 		}
 		for _, cat := range req.Categories {
-			results, err := p.client.NearbyPlaces(ctx, s.Location, cat.Type, cat.Keyword, req.Radius)
+			results, err := tier.Maps.NearbyPlaces(ctx, s.Location, cat.Type, cat.Keyword, req.Radius)
 			block := CatBlock{Label: cat.Label}
 			if err == nil {
 				block.Places = topPlaces(s.Location, results, req.Top)
@@ -138,8 +186,33 @@ func (p *Planner) Plan(ctx context.Context, req Request) (*Result, error) {
 		res.Stops = append(res.Stops, stop)
 	}
 
+	attachWeather(ctx, tier.Weather, res.Stops)
+
 	res.Suggestions = suggestions(total, len(res.Stops))
 	return res, nil
+}
+
+// attachWeather fetches a forecast for each stop's estimated time and
+// location, in one batched request. Weather is a bonus on top of the route
+// and place results, so any failure here is swallowed — stops simply come
+// back without a Weather field rather than failing the whole plan.
+func attachWeather(ctx context.Context, w weather.Provider, stops []Stop) {
+	if w == nil || len(stops) == 0 {
+		return
+	}
+	points := make([]weather.Point, len(stops))
+	for i, s := range stops {
+		points[i] = weather.Point{Lat: s.Lat, Lng: s.Lng, At: s.At}
+	}
+	conditions, err := w.Forecast(ctx, points)
+	if err != nil {
+		return
+	}
+	for i := range stops {
+		if i < len(conditions) {
+			stops[i].Weather = conditions[i]
+		}
+	}
 }
 
 func topPlaces(center gmaps.LatLng, results []gmaps.PlacesSearchResult, top int) []Place {
@@ -163,6 +236,8 @@ func topPlaces(center gmaps.LatLng, results []gmaps.PlacesSearchResult, top int)
 			OpenNow:    openNow,
 			DistanceKm: poi.DistanceMetres(center, r.Geometry.Location) / 1000,
 			MapsURL:    mapsLink(r),
+			Lat:        r.Geometry.Location.Lat,
+			Lng:        r.Geometry.Location.Lng,
 		})
 	}
 	return out

@@ -43,10 +43,10 @@ type Provider interface {
 //   - "" or "osm" (default) → free OpenStreetMap stack, no API key needed
 //   - "google"              → Google Maps; requires GOOGLE_MAPS_API_KEY
 func New() (Provider, error) {
-	switch p := strings.ToLower(strings.TrimSpace(os.Getenv("MAPS_PROVIDER"))); p {
-	case "", "osm", "openstreetmap":
+	switch p := ResolvedName(); p {
+	case "osm":
 		return osm.New(), nil
-	case "google", "googlemaps":
+	case "google":
 		key := os.Getenv("GOOGLE_MAPS_API_KEY")
 		if key == "" {
 			return nil, fmt.Errorf("MAPS_PROVIDER=google requires GOOGLE_MAPS_API_KEY (see .env.example)")
@@ -54,5 +54,19 @@ func New() (Provider, error) {
 		return google.New(key)
 	default:
 		return nil, fmt.Errorf("unknown MAPS_PROVIDER %q (use \"osm\" or \"google\")", p)
+	}
+}
+
+// ResolvedName returns the normalized provider name ("osm" or "google") that
+// New would build, for callers (e.g. the HTTP API) that need to tell the
+// frontend which map renderer to use without constructing a client.
+func ResolvedName() string {
+	switch p := strings.ToLower(strings.TrimSpace(os.Getenv("MAPS_PROVIDER"))); p {
+	case "", "osm", "openstreetmap":
+		return "osm"
+	case "google", "googlemaps":
+		return "google"
+	default:
+		return p
 	}
 }

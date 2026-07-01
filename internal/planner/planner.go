@@ -40,6 +40,8 @@ func LocationAt(route gmaps.Route, offset time.Duration) (gmaps.LatLng, bool) {
 	}
 
 	var acc time.Duration
+	var last gmaps.LatLng
+	haveLast := false
 	for _, leg := range route.Legs {
 		for _, step := range leg.Steps {
 			if acc+step.Duration >= offset {
@@ -50,7 +52,16 @@ func LocationAt(route gmaps.Route, offset time.Duration) (gmaps.LatLng, bool) {
 				return interpolate(step.StartLocation, step.EndLocation, frac), true
 			}
 			acc += step.Duration
+			last, haveLast = step.EndLocation, true
 		}
+	}
+	// A route's per-leg Duration and the sum of its own steps' Durations are
+	// rounded independently (each from a float64 seconds value), so they can
+	// differ by a sliver of time. That can leave offset==total just past the
+	// last step above. Snap back to the route's end rather than reporting
+	// "off the route" for what's really a rounding artifact.
+	if haveLast && offset-acc < time.Second {
+		return last, true
 	}
 	return gmaps.LatLng{}, false
 }

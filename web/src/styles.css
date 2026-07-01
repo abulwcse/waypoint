@@ -25,6 +25,15 @@ body {
 .hero h1 { margin: 0 0 4px; font-size: 2rem; }
 .hero p { margin: 0 0 24px; color: var(--muted); max-width: 60ch; }
 
+.hero-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+.auth-area { display: flex; align-items: center; gap: 10px; padding-top: 4px; }
+.auth-area.signed-in { background: var(--card); border: 1px solid var(--line); border-radius: 999px; padding: 6px 14px 6px 6px; }
+.avatar { width: 28px; height: 28px; border-radius: 50%; }
+.pro-toggle { display: flex; align-items: center; gap: 4px; font-size: 0.85rem; font-weight: 600; color: var(--accent); cursor: pointer; }
+.link-button { background: none; border: none; color: var(--muted); font-size: 0.85rem; cursor: pointer; padding: 0; text-decoration: underline; }
+.link-button:hover { color: var(--text); }
+.tier-badge { display: inline-block; margin-left: 8px; padding: 2px 8px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); font-size: 0.7rem; font-weight: 700; vertical-align: middle; }
+
 .card {
   background: var(--card);
   border: 1px solid var(--line);
@@ -84,8 +93,15 @@ input:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color:
 .summary h2 { margin: 0 0 6px; }
 .summary p { margin: 0; color: var(--muted); }
 
+.map-card { padding: 0; overflow: hidden; }
+.map { height: 360px; width: 100%; background: var(--card-2); }
+.map-loading, .map-error { display: flex; align-items: center; justify-content: center; color: var(--muted); }
+.map .leaflet-popup-content-wrapper, .map .leaflet-popup-tip { background: var(--card); color: var(--text); }
+.map .leaflet-popup-content a { color: var(--accent); }
+
 .stop-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; border-bottom: 1px solid var(--line); padding-bottom: 10px; margin-bottom: 6px; }
 .time { font-size: 1.1rem; font-weight: 600; }
+.weather { font-size: 0.9rem; color: var(--accent); }
 .muted { color: var(--muted); font-size: 0.85rem; }
 .small-text { font-size: 0.8rem; }
 
