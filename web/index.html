@@ -3,10 +3,81 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>waypoint — plan stops along your route</title>
+
+    <!-- Primary meta -->
+    <title>waypoint — plan timed stops along your driving route</title>
+    <meta
+      name="description"
+      content="Plan stops along your driving route with waypoint. Find a masjid, toilet, restaurant, pharmacy and more — timed to when you'll pass, with weather at each stop."
+    />
+    <meta name="robots" content="index, follow" />
+    <meta name="theme-color" content="#0f1720" />
+    <meta name="author" content="waypoint" />
+
+    <!-- Canonical: update if you move to a custom domain -->
+    <link rel="canonical" href="https://waypoint-c72m.onrender.com/" />
+
+    <!-- Icons -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/favicon.svg" />
+
+    <!-- Open Graph (Facebook, LinkedIn, WhatsApp, etc.) -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="waypoint" />
+    <meta property="og:title" content="waypoint — plan timed stops along your driving route" />
+    <meta
+      property="og:description"
+      content="Find a masjid, toilet, restaurant, pharmacy and more along your route — timed to when you'll be passing, with weather at each stop."
+    />
+    <meta property="og:url" content="https://waypoint-c72m.onrender.com/" />
+    <meta property="og:image" content="https://waypoint-c72m.onrender.com/og-image.png" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:locale" content="en_GB" />
+
+    <!-- Twitter / X -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="waypoint — plan timed stops along your driving route" />
+    <meta
+      name="twitter:description"
+      content="Find a masjid, toilet, restaurant, pharmacy and more along your route — timed to when you'll be passing, with weather at each stop."
+    />
+    <meta name="twitter:image" content="https://waypoint-c72m.onrender.com/og-image.png" />
+
+    <!-- Structured data: helps Google understand the app -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebApplication",
+        "name": "waypoint",
+        "url": "https://waypoint-c72m.onrender.com/",
+        "description": "Plan stops along your driving route — find a masjid, toilet, restaurant, pharmacy and more, timed to when you'll be passing, with weather at each stop.",
+        "applicationCategory": "TravelApplication",
+        "operatingSystem": "Web",
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "GBP"
+        }
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>
+
+    <!-- Crawlable fallback: this app renders with JavaScript, so give search
+         engines and no-JS visitors the core content and keywords up front. -->
+    <noscript>
+      <h1>waypoint — plan stops along your route</h1>
+      <p>
+        waypoint helps you plan stops along a driving route. Enter where you're
+        leaving from and heading to, and it finds a masjid, toilet, restaurant,
+        pharmacy and more — timed to when you'll actually be passing, with the
+        weather forecast at each stop. This app needs JavaScript enabled.
+      </p>
+    </noscript>
+
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

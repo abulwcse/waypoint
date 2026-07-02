@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+
+Sitemap: https://waypoint-c72m.onrender.com/sitemap.xml
