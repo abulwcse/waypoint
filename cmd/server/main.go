@@ -28,7 +28,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"os"
@@ -71,7 +70,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	pro, photos := proTier()
+	pro := proTier()
 	srv := &server{
 		planner: trip.New(trip.Tier{Maps: freeMaps, Weather: weather.New()}, pro),
 		// Reverse geocoding ("use my current location") always goes through
@@ -80,7 +79,6 @@ func run() error {
 		// isn't provisioned for the (separate) Geocoding API.
 		reverseGeo:     osm.New(),
 		proAvailable:   pro != nil,
-		photos:         photos,
 		googleClientID: os.Getenv("GOOGLE_CLIENT_ID"),
 		sessionSecret:  sessionSecret(),
 	}
@@ -96,7 +94,6 @@ func run() error {
 	mux.HandleFunc("/api/types", srv.handleTypes)
 	mux.HandleFunc("/api/suggest", srv.handleSuggest)
 	mux.HandleFunc("/api/plan", srv.handlePlan)
-	mux.HandleFunc("/api/photo", srv.handlePhoto)
 	mux.HandleFunc("/api/reverse", srv.handleReverse)
 	registerStatic(mux, *staticDir)
 
@@ -111,21 +108,19 @@ func run() error {
 
 // proTier builds the pro (Google Maps + OpenWeatherMap) tier if both
 // GOOGLE_MAPS_API_KEY and OPENWEATHERMAP_API_KEY are configured; otherwise it
-// returns a nil tier and the server runs free-tier only. The *google.Provider
-// is also returned separately so handlePhoto can proxy Places photos even
-// though it isn't part of the maps.Provider interface (OSM has no photos).
-func proTier() (*trip.Tier, *google.Provider) {
+// returns a nil tier and the server runs free-tier only.
+func proTier() *trip.Tier {
 	mapsKey := os.Getenv("GOOGLE_MAPS_API_KEY")
 	weatherKey := os.Getenv("OPENWEATHERMAP_API_KEY")
 	if mapsKey == "" || weatherKey == "" {
-		return nil, nil
+		return nil
 	}
 	client, err := google.New(mapsKey)
 	if err != nil {
 		log.Printf("pro tier disabled: %v", err)
-		return nil, nil
+		return nil
 	}
-	return &trip.Tier{Maps: client, Weather: openweather.New(weatherKey)}, client
+	return &trip.Tier{Maps: client, Weather: openweather.New(weatherKey)}
 }
 
 // sessionSecret reads SESSION_SECRET, or falls back to a random secret for
@@ -146,7 +141,6 @@ func sessionSecret() []byte {
 type server struct {
 	planner        *trip.Planner
 	googleVerifier *auth.GoogleVerifier // nil if GOOGLE_CLIENT_ID isn't configured
-	photos         *google.Provider     // nil unless the pro tier is configured; used by handlePhoto
 	reverseGeo     *osm.Provider        // used by handleReverse ("use my current location")
 	sessionSecret  []byte
 	googleClientID string
@@ -164,6 +158,10 @@ type mapConfig struct {
 	ProAvailable         bool   `json:"proAvailable"`
 	GoogleClientID       string `json:"googleClientId,omitempty"`
 	GoogleMapsBrowserKey string `json:"googleMapsBrowserKey,omitempty"`
+	// GAMeasurementID is a Google Analytics 4 measurement ID (e.g. "G-XXXXXXXXXX").
+	// When set, the frontend loads gtag.js and reports page views / trip plans.
+	// It's public (it ends up in the browser), so it's fine to ship via config.
+	GAMeasurementID string `json:"gaMeasurementId,omitempty"`
 }
 
 func (s *server) handleConfig(w http.ResponseWriter, r *http.Request) {
@@ -172,9 +170,10 @@ func (s *server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cfg := mapConfig{
-		FreeProvider:   maps.ResolvedName(),
-		ProAvailable:   s.proAvailable,
-		GoogleClientID: s.googleClientID,
+		FreeProvider:    maps.ResolvedName(),
+		ProAvailable:    s.proAvailable,
+		GoogleClientID:  s.googleClientID,
+		GAMeasurementID: os.Getenv("GA_MEASUREMENT_ID"),
 	}
 	if cfg.FreeProvider == "google" || s.proAvailable {
 		cfg.GoogleMapsBrowserKey = envOr("GOOGLE_MAPS_BROWSER_KEY", os.Getenv("GOOGLE_MAPS_API_KEY"))
@@ -278,44 +277,6 @@ func (s *server) handleSuggest(w http.ResponseWriter, r *http.Request) {
 		out = []string{}
 	}
 	writeJSON(w, http.StatusOK, out)
-}
-
-// handlePhoto proxies a Google Places photo by reference. The frontend can't
-// call the Places Photo endpoint directly with GOOGLE_MAPS_BROWSER_KEY — that
-// key is scoped for the Maps JavaScript API, not the Places API — so the
-// server fetches it with GOOGLE_MAPS_API_KEY and streams the bytes through.
-func (s *server) handlePhoto(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, "use GET")
-		return
-	}
-	if s.photos == nil {
-		writeError(w, http.StatusServiceUnavailable, "photos are not configured on this server")
-		return
-	}
-	ref := r.URL.Query().Get("ref")
-	if ref == "" {
-		writeError(w, http.StatusBadRequest, "missing ref")
-		return
-	}
-	width := uint(320)
-	if wq := r.URL.Query().Get("w"); wq != "" {
-		if n, err := strconv.ParseUint(wq, 10, 32); err == nil && n > 0 && n <= 1600 {
-			width = uint(n)
-		}
-	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-	defer cancel()
-	contentType, data, err := s.photos.Photo(ctx, ref, width)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "could not fetch photo: "+err.Error())
-		return
-	}
-	defer data.Close()
-	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("Cache-Control", "public, max-age=86400")
-	io.Copy(w, data)
 }
 
 // handleReverse turns a coordinate (typically from the browser's Geolocation
