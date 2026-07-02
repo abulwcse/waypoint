@@ -80,7 +80,9 @@ func (p *Provider) Photo(ctx context.Context, photoRef string, maxWidth uint) (c
 	return resp.ContentType, resp.Data, nil
 }
 
-// Suggest returns city-name completions via the Places Autocomplete API.
+// Suggest returns place completions via the Places Autocomplete API —
+// unrestricted by type, so results span cities, addresses, postcodes, and
+// named places rather than just cities.
 func (p *Provider) Suggest(ctx context.Context, query string) ([]string, error) {
 	query = strings.TrimSpace(query)
 	if len(query) < 2 {
@@ -88,7 +90,6 @@ func (p *Provider) Suggest(ctx context.Context, query string) ([]string, error) 
 	}
 	resp, err := p.c.PlaceAutocomplete(ctx, &gmaps.PlaceAutocompleteRequest{
 		Input: query,
-		Types: gmaps.AutocompletePlaceTypeCities,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("autocomplete: %w", err)

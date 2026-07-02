@@ -41,6 +41,7 @@ import (
 	"github.com/abulhassan/waypoint/internal/config"
 	"github.com/abulhassan/waypoint/internal/maps"
 	"github.com/abulhassan/waypoint/internal/maps/google"
+	"github.com/abulhassan/waypoint/internal/maps/osm"
 	"github.com/abulhassan/waypoint/internal/poi"
 	"github.com/abulhassan/waypoint/internal/trip"
 	"github.com/abulhassan/waypoint/internal/weather"
@@ -72,7 +73,12 @@ func run() error {
 	}
 	pro, photos := proTier()
 	srv := &server{
-		planner:        trip.New(trip.Tier{Maps: freeMaps, Weather: weather.New()}, pro),
+		planner: trip.New(trip.Tier{Maps: freeMaps, Weather: weather.New()}, pro),
+		// Reverse geocoding ("use my current location") always goes through
+		// OSM's free, keyless Nominatim, regardless of MAPS_PROVIDER — it's a
+		// convenience label lookup, not a paid feature, and the Google key
+		// isn't provisioned for the (separate) Geocoding API.
+		reverseGeo:     osm.New(),
 		proAvailable:   pro != nil,
 		photos:         photos,
 		googleClientID: os.Getenv("GOOGLE_CLIENT_ID"),
@@ -91,6 +97,7 @@ func run() error {
 	mux.HandleFunc("/api/suggest", srv.handleSuggest)
 	mux.HandleFunc("/api/plan", srv.handlePlan)
 	mux.HandleFunc("/api/photo", srv.handlePhoto)
+	mux.HandleFunc("/api/reverse", srv.handleReverse)
 	registerStatic(mux, *staticDir)
 
 	httpSrv := &http.Server{
@@ -140,6 +147,7 @@ type server struct {
 	planner        *trip.Planner
 	googleVerifier *auth.GoogleVerifier // nil if GOOGLE_CLIENT_ID isn't configured
 	photos         *google.Provider     // nil unless the pro tier is configured; used by handlePhoto
+	reverseGeo     *osm.Provider        // used by handleReverse ("use my current location")
 	sessionSecret  []byte
 	googleClientID string
 	proAvailable   bool
@@ -308,6 +316,30 @@ func (s *server) handlePhoto(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Cache-Control", "public, max-age=86400")
 	io.Copy(w, data)
+}
+
+// handleReverse turns a coordinate (typically from the browser's Geolocation
+// API) into a human-readable address, so "use my current location" can show
+// something better than raw numbers in the From field.
+func (s *server) handleReverse(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "use GET")
+		return
+	}
+	lat, errLat := strconv.ParseFloat(r.URL.Query().Get("lat"), 64)
+	lng, errLng := strconv.ParseFloat(r.URL.Query().Get("lng"), 64)
+	if errLat != nil || errLng != nil {
+		writeError(w, http.StatusBadRequest, "lat and lng must be numbers")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	label, err := s.reverseGeo.Reverse(ctx, lat, lng)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "could not resolve address: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"label": label})
 }
 
 type planRequest struct {

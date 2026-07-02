@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
-import { fetchMapConfig, fetchMe, fetchTypes, planTrip, signInWithGoogle, signOut, suggestPlaces } from './api.js'
+import { fetchMapConfig, fetchMe, fetchTypes, planTrip, reverseGeocode, signInWithGoogle, signOut, suggestPlaces } from './api.js'
 import MapView from './maps/MapView.jsx'
 import GoogleSignIn from './auth/GoogleSignIn.jsx'
 
@@ -19,6 +19,7 @@ export default function App() {
   const [top, setTop] = useState(3)
 
   const [loading, setLoading] = useState(false)
+  const [locating, setLocating] = useState(false)
   const [error, setError] = useState('')
   const [result, setResult] = useState(null)
 
@@ -57,6 +58,36 @@ export default function App() {
       next.has(alias) ? next.delete(alias) : next.add(alias)
       return next
     })
+  }
+
+  // handleUseLocation fills From from the browser's Geolocation API, showing
+  // a readable address (via reverse geocoding) rather than raw coordinates
+  // where possible — falling back to "lat,lng" if that lookup fails, which
+  // the server accepts directly as a route endpoint.
+  function handleUseLocation() {
+    if (!navigator.geolocation) {
+      setError('Geolocation is not supported by this browser.')
+      return
+    }
+    setError('')
+    setLocating(true)
+    navigator.geolocation.getCurrentPosition(
+      async ({ coords }) => {
+        const { latitude, longitude } = coords
+        try {
+          setFrom(await reverseGeocode(latitude, longitude))
+        } catch {
+          setFrom(`${latitude.toFixed(5)},${longitude.toFixed(5)}`)
+        } finally {
+          setLocating(false)
+        }
+      },
+      (err) => {
+        setError(`Could not get your location: ${err.message}`)
+        setLocating(false)
+      },
+      { enableHighAccuracy: true, timeout: 10000 },
+    )
   }
 
   const isPro = pro && !!user
@@ -118,8 +149,16 @@ export default function App() {
 
       <form className="card form" onSubmit={onSubmit}>
         <div className="row">
-          <CityInput label="From" value={from} onChange={setFrom} placeholder="Manchester, UK" pro={isPro} />
-          <CityInput label="To" value={to} onChange={setTo} placeholder="London, UK" pro={isPro} />
+          <CityInput
+            label="From"
+            value={from}
+            onChange={setFrom}
+            placeholder="Address, postcode, or place"
+            pro={isPro}
+            onUseLocation={handleUseLocation}
+            locating={locating}
+          />
+          <CityInput label="To" value={to} onChange={setTo} placeholder="Address, postcode, or place" pro={isPro} />
         </div>
 
         <div className="row">
@@ -227,10 +266,13 @@ function AuthArea({ config, user, pro, onProChange, onCredential, onSignOut }) {
   )
 }
 
-// CityInput is a text field with debounced place-name autocomplete, backed by
-// /api/suggest. It renders a native <datalist> so the dropdown, filtering, and
-// keyboard handling come for free.
-function CityInput({ label, value, onChange, placeholder, pro }) {
+// CityInput is a free-text location field — an address, postcode, landmark,
+// or city all work, since /api/suggest and the server's geocoding both
+// accept any of those — with debounced autocomplete backed by /api/suggest.
+// It renders a native <datalist> so the dropdown, filtering, and keyboard
+// handling come for free. Pass onUseLocation to also show a "use my current
+// location" button (see App's handleUseLocation).
+function CityInput({ label, value, onChange, placeholder, pro, onUseLocation, locating }) {
   const [options, setOptions] = useState([])
   const listId = useId()
   const lastQuery = useRef('')
@@ -252,13 +294,27 @@ function CityInput({ label, value, onChange, placeholder, pro }) {
   return (
     <label className="field">
       <span>{label}</span>
-      <input
-        list={listId}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        autoComplete="off"
-      />
+      <div className="input-with-action">
+        <input
+          list={listId}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          autoComplete="off"
+        />
+        {onUseLocation && (
+          <button
+            type="button"
+            className="locate-btn"
+            onClick={onUseLocation}
+            disabled={locating}
+            title="Use my current location"
+            aria-label="Use my current location"
+          >
+            {locating ? '…' : '📍'}
+          </button>
+        )}
+      </div>
       <datalist id={listId}>
         {options.map((o) => <option key={o} value={o} />)}
       </datalist>

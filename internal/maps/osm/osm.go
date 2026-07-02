@@ -170,26 +170,22 @@ func (p *Provider) NearbyPlaces(ctx context.Context, loc gmaps.LatLng, placeType
 	return out, nil
 }
 
-// Suggest returns up to 5 city-name completions via Photon, komoot's OSM-based
+// Suggest returns up to 5 place completions via Photon, komoot's OSM-based
 // autocomplete service (free, keyless, built for prefix/type-ahead search —
-// Nominatim is a geocoder, not an autocomplete engine).
+// Nominatim is a geocoder, not an autocomplete engine). Unrestricted by
+// layer, so results span cities, streets, postcodes, and named places —
+// anything Photon indexes, not just cities.
 func (p *Provider) Suggest(ctx context.Context, query string) ([]string, error) {
 	query = strings.TrimSpace(query)
 	if len(query) < 2 {
 		return nil, nil
 	}
-	u := fmt.Sprintf("%s/?q=%s&limit=5&layer=city",
+	u := fmt.Sprintf("%s/?q=%s&limit=5",
 		strings.TrimRight(p.photon, "/"), url.QueryEscape(query))
 
 	var resp struct {
 		Features []struct {
-			Properties struct {
-				Name    string `json:"name"`
-				City    string `json:"city"`
-				State   string `json:"state"`
-				County  string `json:"county"`
-				Country string `json:"country"`
-			} `json:"properties"`
+			Properties photonProps `json:"properties"`
 		} `json:"features"`
 	}
 	if err := p.getJSON(ctx, u, &resp); err != nil {
@@ -199,7 +195,7 @@ func (p *Provider) Suggest(ctx context.Context, query string) ([]string, error) 
 	out := make([]string, 0, len(resp.Features))
 	seen := map[string]bool{}
 	for _, f := range resp.Features {
-		label := photonLabel(f.Properties.Name, f.Properties.City, f.Properties.State, f.Properties.County, f.Properties.Country)
+		label := photonLabel(f.Properties)
 		if label != "" && !seen[label] {
 			seen[label] = true
 			out = append(out, label)
@@ -208,16 +204,52 @@ func (p *Provider) Suggest(ctx context.Context, query string) ([]string, error) 
 	return out, nil
 }
 
-// photonLabel assembles a readable "City, Region, Country" label, skipping
-// empty and duplicate parts.
-func photonLabel(name, city, state, county, country string) string {
-	region := state
-	if region == "" {
-		region = county
+// Reverse turns a coordinate into a human-readable place label, via
+// Nominatim's reverse-geocoding endpoint — used for "use my current
+// location" so the From field shows an address instead of raw numbers.
+func (p *Provider) Reverse(ctx context.Context, lat, lng float64) (string, error) {
+	u := fmt.Sprintf("%s/reverse?format=jsonv2&lat=%s&lon=%s",
+		strings.TrimRight(p.nominatim, "/"),
+		strconv.FormatFloat(lat, 'f', 6, 64), strconv.FormatFloat(lng, 'f', 6, 64))
+
+	var hit struct {
+		DisplayName string `json:"display_name"`
 	}
-	parts := make([]string, 0, 3)
+	if err := p.getJSON(ctx, u, &hit); err != nil {
+		return "", err
+	}
+	if hit.DisplayName == "" {
+		return "", fmt.Errorf("no address found for %f,%f", lat, lng)
+	}
+	return hit.DisplayName, nil
+}
+
+// photonProps is the subset of a Photon feature's properties used to build a
+// display label, covering both place-level (city/state/country) and
+// address-level (housenumber/street/postcode) results.
+type photonProps struct {
+	Name        string `json:"name"`
+	HouseNumber string `json:"housenumber"`
+	Street      string `json:"street"`
+	Postcode    string `json:"postcode"`
+	City        string `json:"city"`
+	State       string `json:"state"`
+	County      string `json:"county"`
+	Country     string `json:"country"`
+}
+
+// photonLabel assembles a readable label from a Photon result, skipping
+// empty and duplicate parts. Address-level results (with a street) lead with
+// "housenumber street"; place-level results lead with the place's own name.
+func photonLabel(p photonProps) string {
+	region := p.State
+	if region == "" {
+		region = p.County
+	}
+	head := firstNonEmpty(strings.TrimSpace(p.HouseNumber+" "+p.Street), p.Name, p.City)
+	parts := make([]string, 0, 5)
 	seen := map[string]bool{}
-	for _, c := range []string{firstNonEmpty(name, city), region, country} {
+	for _, c := range []string{head, p.Postcode, p.City, region, p.Country} {
 		if c != "" && !seen[c] {
 			seen[c] = true
 			parts = append(parts, c)

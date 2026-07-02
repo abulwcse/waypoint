@@ -19,6 +19,17 @@ export async function suggestPlaces(q, pro = false) {
   return res.json().catch(() => [])
 }
 
+// reverseGeocode turns a coordinate into a human-readable address, for "use
+// my current location" (see the geolocate button in CityInput).
+export async function reverseGeocode(lat, lng) {
+  const res = await fetch(`/api/reverse?lat=${lat}&lng=${lng}`)
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    throw new Error(data.error || `could not resolve address (${res.status})`)
+  }
+  return data.label
+}
+
 export async function planTrip(body) {
   const res = await fetch('/api/plan', {
     method: 'POST',
