@@ -1,9 +1,8 @@
 // Package openweather implements weather.Provider using OpenWeatherMap's One
-// Call 3.0 API — the richer "pro" forecast backend (humidity, UV index,
-// visibility, precipitation probability) offered to signed-in pro users.
-// Requires an OPENWEATHERMAP_API_KEY (see .env.example); note OpenWeatherMap
-// requires a separate opt-in subscription for One Call 3.0, even on its free
-// tier of 1,000 calls/day.
+// Call 4.0 hourly timeline API — the richer "pro" forecast backend (humidity,
+// UV index, visibility, precipitation probability) offered to signed-in pro
+// users. Requires an OPENWEATHERMAP_API_KEY (see .env.example) subscribed to
+// the One Call by Call plan (free tier: 1,000 calls/day).
 package openweather
 
 import (
@@ -22,7 +21,7 @@ import (
 	"github.com/abulhassan/waypoint/internal/weather"
 )
 
-// Provider talks to the OpenWeatherMap One Call 3.0 API.
+// Provider talks to the OpenWeatherMap One Call 4.0 API.
 type Provider struct {
 	http    *http.Client
 	apiKey  string
@@ -34,13 +33,14 @@ func New(apiKey string) *Provider {
 	return &Provider{
 		http:    &http.Client{Timeout: 15 * time.Second},
 		apiKey:  apiKey,
-		baseURL: envOr("OPENWEATHERMAP_URL", "https://api.openweathermap.org/data/3.0/onecall"),
+		baseURL: envOr("OPENWEATHERMAP_URL", "https://api.openweathermap.org/data/4.0/onecall/timeline/1h"),
 	}
 }
 
 // Forecast fetches conditions for each point concurrently. Unlike Open-Meteo,
-// One Call 3.0 takes one coordinate per request, so there's no batching
-// endpoint to use instead — a per-point failure just leaves that entry nil.
+// the One Call timeline endpoint takes one coordinate per request, so there's
+// no batching endpoint to use instead — a per-point failure just leaves that
+// entry nil.
 func (p *Provider) Forecast(ctx context.Context, points []weather.Point) ([]*weather.Conditions, error) {
 	out := make([]*weather.Conditions, len(points))
 	var wg sync.WaitGroup
@@ -63,7 +63,7 @@ type owWeatherDesc struct {
 	Icon        string `json:"icon"`
 }
 
-type owHourly struct {
+type owEntry struct {
 	Dt         int64           `json:"dt"`
 	Temp       float64         `json:"temp"`
 	FeelsLike  float64         `json:"feels_like"`
@@ -77,11 +77,10 @@ type owHourly struct {
 
 func (p *Provider) forecastOne(ctx context.Context, pt weather.Point) (*weather.Conditions, error) {
 	q := url.Values{
-		"lat":     {strconv.FormatFloat(pt.Lat, 'f', 5, 64)},
-		"lon":     {strconv.FormatFloat(pt.Lng, 'f', 5, 64)},
-		"appid":   {p.apiKey},
-		"units":   {"metric"},
-		"exclude": {"current,minutely,daily,alerts"},
+		"lat":   {strconv.FormatFloat(pt.Lat, 'f', 5, 64)},
+		"lon":   {strconv.FormatFloat(pt.Lng, 'f', 5, 64)},
+		"appid": {p.apiKey},
+		"units": {"metric"},
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.baseURL+"?"+q.Encode(), nil)
 	if err != nil {
@@ -97,18 +96,19 @@ func (p *Provider) forecastOne(ctx context.Context, pt weather.Point) (*weather.
 	}
 
 	var body struct {
-		Hourly []owHourly `json:"hourly"`
+		Data []owEntry `json:"data"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		return nil, fmt.Errorf("openweathermap: decode: %w", err)
 	}
 
-	// One Call 3.0's hourly array only covers the next 48 hours, so a target
-	// far outside that window (a very long trip) legitimately has no match.
+	// The timeline/1h endpoint returns one page (20 hours) starting at the
+	// current hour, so a target far outside that window (a very long trip)
+	// legitimately has no match.
 	target := pt.At.Unix()
 	best := -1
 	var bestDiff int64
-	for i, h := range body.Hourly {
+	for i, h := range body.Data {
 		diff := target - h.Dt
 		if diff < 0 {
 			diff = -diff
@@ -121,7 +121,7 @@ func (p *Provider) forecastOne(ctx context.Context, pt weather.Point) (*weather.
 		return nil, fmt.Errorf("no forecast hour close enough to %s", pt.At)
 	}
 
-	h := body.Hourly[best]
+	h := body.Data[best]
 	desc, icon, code := "Unknown", "❓", 0
 	if len(h.Weather) > 0 {
 		desc = capitalize(h.Weather[0].Description)
