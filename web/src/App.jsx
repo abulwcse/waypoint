@@ -10,7 +10,8 @@ export default function App() {
   const [selected, setSelected] = useState(new Set(DEFAULT_TYPES))
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
-  const [depart, setDepart] = useState('now')
+  const [departNow, setDepartNow] = useState(true)
+  const [departTime, setDepartTime] = useState('09:00')
   const [mode, setMode] = useState('at') // 'at' | 'every'
   const [at, setAt] = useState('13:15')
   const [every, setEvery] = useState('2h')
@@ -77,7 +78,7 @@ export default function App() {
     const body = {
       from,
       to,
-      depart,
+      depart: departNow ? 'now' : departTime,
       types: [...selected],
       radius: Math.round(Number(radiusMi) * 1609.34), // miles → metres (server works in metres)
       top: Number(top),
@@ -124,8 +125,18 @@ export default function App() {
         <div className="row">
           <label className="field">
             <span>Depart</span>
-            <input value={depart} onChange={(e) => setDepart(e.target.value)} placeholder="now or 09:00" />
+            <div className="seg">
+              <button type="button" className={departNow ? 'on' : ''} onClick={() => setDepartNow(true)}>Now</button>
+              <button type="button" className={!departNow ? 'on' : ''} onClick={() => setDepartNow(false)}>At time</button>
+            </div>
           </label>
+
+          {!departNow && (
+            <label className="field">
+              <span>Departure time</span>
+              <input type="time" value={departTime} onChange={(e) => setDepartTime(e.target.value)} />
+            </label>
+          )}
 
           <div className="field">
             <span>When to stop</span>
