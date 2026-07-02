@@ -77,12 +77,8 @@ type Place struct {
 	OpenNow     *bool   `json:"openNow"`
 	DistanceKm  float64 `json:"distanceKm"`
 	MapsURL     string  `json:"mapsUrl"`
-	// PhotoRef is a Google Places photo reference (pro/Google tier only —
-	// OSM has no photo data). The frontend turns it into an image URL via
-	// the Places Photo endpoint using the browser-restricted Maps key.
-	PhotoRef string  `json:"photoRef,omitempty"`
-	Lat      float64 `json:"lat"`
-	Lng      float64 `json:"lng"`
+	Lat         float64 `json:"lat"`
+	Lng         float64 `json:"lng"`
 }
 
 // Tier bundles the maps and weather backends for one service level.
@@ -234,10 +230,6 @@ func topPlaces(center gmaps.LatLng, results []gmaps.PlacesSearchResult, top int)
 		if r.OpeningHours != nil && r.OpeningHours.OpenNow != nil {
 			openNow = r.OpeningHours.OpenNow
 		}
-		var photoRef string
-		if len(r.Photos) > 0 {
-			photoRef = r.Photos[0].PhotoReference
-		}
 		out = append(out, Place{
 			Name:        r.Name,
 			Vicinity:    r.Vicinity,
@@ -246,7 +238,6 @@ func topPlaces(center gmaps.LatLng, results []gmaps.PlacesSearchResult, top int)
 			OpenNow:     openNow,
 			DistanceKm:  poi.DistanceMetres(center, r.Geometry.Location) / 1000,
 			MapsURL:     mapsLink(r),
-			PhotoRef:    photoRef,
 			Lat:         r.Geometry.Location.Lat,
 			Lng:         r.Geometry.Location.Lng,
 		})

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { fetchMapConfig, fetchMe, fetchTypes, planTrip, reverseGeocode, signInWithGoogle, signOut, suggestPlaces } from './api.js'
+import { consentDecision, initAnalytics, setConsent, trackEvent } from './analytics.js'
 import MapView from './maps/MapView.jsx'
 import GoogleSignIn from './auth/GoogleSignIn.jsx'
 
@@ -26,6 +27,9 @@ export default function App() {
   const [config, setConfig] = useState(null)
   const [user, setUser] = useState(null)
   const [pro, setPro] = useState(false)
+  // Whether to show the analytics consent banner: only once GA is configured
+  // and the user hasn't already accepted or declined on a previous visit.
+  const [askConsent, setAskConsent] = useState(false)
 
   useEffect(() => {
     fetchTypes()
@@ -38,13 +42,25 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    fetchMapConfig().then(setConfig).catch(() => {})
+    fetchMapConfig()
+      .then((cfg) => {
+        setConfig(cfg)
+        initAnalytics(cfg.gaMeasurementId) // no-op unless GA_MEASUREMENT_ID is set
+        // Ask for consent only when GA is on and the user hasn't decided yet.
+        if (cfg.gaMeasurementId && !consentDecision()) setAskConsent(true)
+      })
+      .catch(() => {})
     fetchMe().then(setUser).catch(() => {})
   }, [])
 
   const handleCredential = useCallback((credential) => {
     signInWithGoogle(credential).then(setUser).catch((e) => setError(e.message))
   }, [])
+
+  function handleConsent(granted) {
+    setConsent(granted)
+    setAskConsent(false)
+  }
 
   async function handleSignOut() {
     await signOut()
@@ -121,6 +137,13 @@ export default function App() {
     setLoading(true)
     try {
       setResult(await planTrip(body))
+      trackEvent('plan_trip', {
+        types: [...selected].join(','),
+        type_count: selected.size,
+        depart_now: departNow,
+        schedule_mode: mode,
+        pro: isPro,
+      })
     } catch (err) {
       setError(err.message)
     } finally {
@@ -232,6 +255,30 @@ export default function App() {
       {error && <div className="card error">⚠️ {error}</div>}
 
       {result && <Results result={result} config={config} />}
+
+      {askConsent && <ConsentBanner onDecision={handleConsent} />}
+    </div>
+  )
+}
+
+// ConsentBanner asks for permission before analytics cookies are used. Until
+// the user chooses, GA4 runs in Consent Mode with storage denied (see
+// analytics.js); accepting flips analytics_storage to granted.
+function ConsentBanner({ onDecision }) {
+  return (
+    <div className="consent" role="dialog" aria-label="Analytics consent">
+      <p>
+        We'd like to use Google Analytics cookies to understand how waypoint is used.
+        No analytics data is collected until you accept.
+      </p>
+      <div className="consent-actions">
+        <button type="button" className="consent-decline" onClick={() => onDecision(false)}>
+          Decline
+        </button>
+        <button type="button" className="consent-accept" onClick={() => onDecision(true)}>
+          Accept
+        </button>
+      </div>
     </div>
   )
 }

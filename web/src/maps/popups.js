@@ -1,22 +1,7 @@
 // Shared popup markup for both map renderers (OsmMap and GoogleMap), so a
 // place card looks the same regardless of which one is active.
 
-// photoUrl turns a Google Places photo reference into a loadable image URL,
-// via our own server (see cmd/server's handlePhoto) rather than calling
-// Google's Places Photo endpoint directly — that needs a key scoped for the
-// Places API, which the browser-restricted Maps key isn't. OSM places never
-// have a photoRef (Overpass has no photo data).
-function photoUrl(photoRef) {
-  if (!photoRef) return null
-  return `/api/photo?ref=${encodeURIComponent(photoRef)}&w=320`
-}
-
 export function placePopupHtml(label, place) {
-  const photo = photoUrl(place.photoRef)
-  const photoHtml = photo
-    ? `<img class="popup-photo" src="${escapeAttr(photo)}" alt="${escapeAttr(place.name)}" loading="lazy" />`
-    : ''
-
   const ratingHtml = place.rating > 0
     ? `★ ${place.rating.toFixed(1)}${place.reviewCount ? ` (${place.reviewCount})` : ''}`
     : ''
@@ -28,7 +13,6 @@ export function placePopupHtml(label, place) {
   const metaParts = [ratingHtml, openHtml].filter(Boolean).join(' · ')
 
   return `<div class="popup-card">
-    ${photoHtml}
     <div class="popup-body">
       <div class="popup-label">${escapeHtml(label)}</div>
       <div class="popup-name">${escapeHtml(place.name)}</div>
