@@ -96,8 +96,23 @@ input:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color:
 .map-card { padding: 0; overflow: hidden; }
 .map { height: 360px; width: 100%; background: var(--card-2); }
 .map-loading, .map-error { display: flex; align-items: center; justify-content: center; color: var(--muted); }
-.map .leaflet-popup-content-wrapper, .map .leaflet-popup-tip { background: var(--card); color: var(--text); }
-.map .leaflet-popup-content a { color: var(--accent); }
+/* Popup cards are styled as a self-contained light card (like Google Maps'
+   own info windows) rather than following the app's dark theme, since the
+   Google renderer's InfoWindow chrome is white and can't be restyled. */
+.map .leaflet-popup-content-wrapper { padding: 0; border-radius: 10px; }
+.map .leaflet-popup-content { margin: 0; }
+
+.popup-card { display: flex; flex-direction: column; width: 220px; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: #fff; border-radius: 10px; overflow: hidden; }
+.popup-photo { width: 100%; height: 120px; object-fit: cover; display: block; }
+.popup-body { padding: 10px 12px 12px; }
+.popup-label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; color: #64748b; }
+.popup-name { font-weight: 600; font-size: 0.95rem; margin: 2px 0; color: #0f1720; }
+.popup-address { font-size: 0.82rem; color: #475569; margin-bottom: 4px; }
+.popup-meta { font-size: 0.82rem; color: #1f2c3a; margin-bottom: 2px; }
+.popup-open { color: #16a34a; font-weight: 600; }
+.popup-closed { color: #dc2626; font-weight: 600; }
+.popup-link { display: inline-block; margin-top: 6px; font-size: 0.82rem; color: #0891b2; text-decoration: none; }
+.popup-link:hover { text-decoration: underline; }
 
 .stop-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; border-bottom: 1px solid var(--line); padding-bottom: 10px; margin-bottom: 6px; }
 .time { font-size: 1.1rem; font-weight: 600; }

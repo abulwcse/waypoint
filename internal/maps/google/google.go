@@ -9,6 +9,7 @@ package google
 import (
 	"context"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 	"time"
@@ -64,6 +65,19 @@ func (p *Provider) NearbyPlaces(ctx context.Context, loc gmaps.LatLng, placeType
 		return nil, fmt.Errorf("nearby search: %w", err)
 	}
 	return resp.Results, nil
+}
+
+// Photo fetches a Places photo by reference (as returned in a
+// PlacesSearchResult's Photos, see NearbyPlaces), scaled to at most maxWidth
+// pixels wide. The server proxies this rather than handing the frontend a key
+// (see cmd/server's handlePhoto) since the Places Photo endpoint needs a key
+// scoped for the Places API, which the browser-restricted Maps key isn't.
+func (p *Provider) Photo(ctx context.Context, photoRef string, maxWidth uint) (contentType string, data io.ReadCloser, err error) {
+	resp, err := p.c.PlacePhoto(ctx, &gmaps.PlacePhotoRequest{PhotoReference: photoRef, MaxWidth: maxWidth})
+	if err != nil {
+		return "", nil, fmt.Errorf("place photo: %w", err)
+	}
+	return resp.ContentType, resp.Data, nil
 }
 
 // Suggest returns city-name completions via the Places Autocomplete API.

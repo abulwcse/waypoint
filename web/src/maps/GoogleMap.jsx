@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { loadGoogleMaps } from './googleLoader.js'
 import { decodePolyline } from './polyline.js'
 import { ORIGIN_MARKER, DESTINATION_MARKER, STOP_MARKER, markerForCategory, pinDataUrl } from './markers.js'
+import { placePopupHtml, stopPopupHtml } from './popups.js'
 
 // GoogleMap renders the paid Google Maps JavaScript API — used when the
 // server is configured with MAPS_PROVIDER=google (see internal/maps).
@@ -9,6 +10,7 @@ export default function GoogleMap({ result, apiKey }) {
   const containerRef = useRef(null)
   const mapRef = useRef(null)
   const overlaysRef = useRef([])
+  const infoWindowRef = useRef(null)
   const [google, setGoogle] = useState(null)
   const [error, setError] = useState('')
 
@@ -27,6 +29,10 @@ export default function GoogleMap({ result, apiKey }) {
       zoom: 6,
       scrollwheel: false,
     })
+    // One shared InfoWindow, reused across markers, so opening a new popup
+    // closes whichever one was open before — matches Leaflet's default
+    // behavior and real Google Maps' single-info-window UX.
+    infoWindowRef.current = new google.InfoWindow()
   }, [google])
 
   useEffect(() => {
@@ -35,6 +41,7 @@ export default function GoogleMap({ result, apiKey }) {
 
     for (const overlay of overlaysRef.current) overlay.setMap(null)
     overlaysRef.current = []
+    infoWindowRef.current.close()
 
     const bounds = new google.LatLngBounds()
     const icon = (marker) => ({
@@ -45,8 +52,10 @@ export default function GoogleMap({ result, apiKey }) {
     const addMarker = (lat, lng, marker, popupHtml) => {
       const position = { lat, lng }
       const m = new google.Marker({ position, map, icon: icon(marker) })
-      const info = new google.InfoWindow({ content: popupHtml })
-      m.addListener('click', () => info.open({ map, anchor: m }))
+      m.addListener('click', () => {
+        infoWindowRef.current.setContent(popupHtml)
+        infoWindowRef.current.open({ map, anchor: m })
+      })
       overlaysRef.current.push(m)
       bounds.extend(position)
     }
@@ -62,11 +71,11 @@ export default function GoogleMap({ result, apiKey }) {
     if (result.destination) addMarker(result.destination.lat, result.destination.lng, DESTINATION_MARKER, 'Destination')
 
     for (const stop of result.stops || []) {
-      addMarker(stop.lat, stop.lng, STOP_MARKER, stopPopup(stop))
+      addMarker(stop.lat, stop.lng, STOP_MARKER, stopPopupHtml(stop))
       for (const cat of stop.categories || []) {
         const marker = markerForCategory(cat.label)
         for (const place of cat.places || []) {
-          addMarker(place.lat, place.lng, marker, placePopup(cat.label, place))
+          addMarker(place.lat, place.lng, marker, placePopupHtml(cat.label, place))
         }
       }
     }
@@ -76,28 +85,4 @@ export default function GoogleMap({ result, apiKey }) {
 
   if (error) return <div className="map map-error">⚠️ {error}</div>
   return <div className="map" ref={containerRef} />
-}
-
-function placePopup(label, place) {
-  const ratingHtml = place.rating > 0 ? ` · ★ ${place.rating.toFixed(1)}` : ''
-  return `<strong>${escapeHtml(label)}</strong><br/><a href="${escapeAttr(place.mapsUrl)}" target="_blank" rel="noreferrer">${escapeHtml(place.name)}</a><br/>${place.distanceKm.toFixed(1)} km${ratingHtml}`
-}
-
-function stopPopup(stop) {
-  const weatherHtml = stop.weather
-    ? `<br/>${escapeHtml(stop.weather.icon)} ${escapeHtml(stop.weather.description)}, ${Math.round(stop.weather.tempC)}°C`
-    : ''
-  return `Estimated position at ${fmtTime(stop.at)}${weatherHtml}`
-}
-
-function fmtTime(iso) {
-  return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-}
-
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
-}
-
-function escapeAttr(s) {
-  return escapeHtml(s)
 }

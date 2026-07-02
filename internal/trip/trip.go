@@ -70,14 +70,19 @@ type CatBlock struct {
 
 // Place is a single nearby result.
 type Place struct {
-	Name       string  `json:"name"`
-	Vicinity   string  `json:"vicinity"`
-	Rating     float32 `json:"rating"`
-	OpenNow    *bool   `json:"openNow"`
-	DistanceKm float64 `json:"distanceKm"`
-	MapsURL    string  `json:"mapsUrl"`
-	Lat        float64 `json:"lat"`
-	Lng        float64 `json:"lng"`
+	Name        string  `json:"name"`
+	Vicinity    string  `json:"vicinity"`
+	Rating      float32 `json:"rating"`
+	ReviewCount int     `json:"reviewCount,omitempty"`
+	OpenNow     *bool   `json:"openNow"`
+	DistanceKm  float64 `json:"distanceKm"`
+	MapsURL     string  `json:"mapsUrl"`
+	// PhotoRef is a Google Places photo reference (pro/Google tier only —
+	// OSM has no photo data). The frontend turns it into an image URL via
+	// the Places Photo endpoint using the browser-restricted Maps key.
+	PhotoRef string  `json:"photoRef,omitempty"`
+	Lat      float64 `json:"lat"`
+	Lng      float64 `json:"lng"`
 }
 
 // Tier bundles the maps and weather backends for one service level.
@@ -229,15 +234,21 @@ func topPlaces(center gmaps.LatLng, results []gmaps.PlacesSearchResult, top int)
 		if r.OpeningHours != nil && r.OpeningHours.OpenNow != nil {
 			openNow = r.OpeningHours.OpenNow
 		}
+		var photoRef string
+		if len(r.Photos) > 0 {
+			photoRef = r.Photos[0].PhotoReference
+		}
 		out = append(out, Place{
-			Name:       r.Name,
-			Vicinity:   r.Vicinity,
-			Rating:     r.Rating,
-			OpenNow:    openNow,
-			DistanceKm: poi.DistanceMetres(center, r.Geometry.Location) / 1000,
-			MapsURL:    mapsLink(r),
-			Lat:        r.Geometry.Location.Lat,
-			Lng:        r.Geometry.Location.Lng,
+			Name:        r.Name,
+			Vicinity:    r.Vicinity,
+			Rating:      r.Rating,
+			ReviewCount: r.UserRatingsTotal,
+			OpenNow:     openNow,
+			DistanceKm:  poi.DistanceMetres(center, r.Geometry.Location) / 1000,
+			MapsURL:     mapsLink(r),
+			PhotoRef:    photoRef,
+			Lat:         r.Geometry.Location.Lat,
+			Lng:         r.Geometry.Location.Lng,
 		})
 	}
 	return out

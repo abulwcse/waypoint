@@ -3,6 +3,7 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { decodePolyline } from './polyline.js'
 import { ORIGIN_MARKER, DESTINATION_MARKER, STOP_MARKER, markerForCategory, pinDataUrl } from './markers.js'
+import { placePopupHtml, stopPopupHtml } from './popups.js'
 
 function pinIcon(marker) {
   return L.icon({
@@ -53,11 +54,11 @@ export default function OsmMap({ result }) {
     if (result.destination) addMarker(result.destination.lat, result.destination.lng, DESTINATION_MARKER, 'Destination')
 
     for (const stop of result.stops || []) {
-      addMarker(stop.lat, stop.lng, STOP_MARKER, stopPopup(stop))
+      addMarker(stop.lat, stop.lng, STOP_MARKER, stopPopupHtml(stop))
       for (const cat of stop.categories || []) {
         const marker = markerForCategory(cat.label)
         for (const place of cat.places || []) {
-          addMarker(place.lat, place.lng, marker, placePopup(cat.label, place))
+          addMarker(place.lat, place.lng, marker, placePopupHtml(cat.label, place))
         }
       }
     }
@@ -66,28 +67,4 @@ export default function OsmMap({ result }) {
   }, [result])
 
   return <div className="map" ref={containerRef} />
-}
-
-function placePopup(label, place) {
-  const ratingHtml = place.rating > 0 ? ` · ★ ${place.rating.toFixed(1)}` : ''
-  return `<strong>${escapeHtml(label)}</strong><br/><a href="${escapeAttr(place.mapsUrl)}" target="_blank" rel="noreferrer">${escapeHtml(place.name)}</a><br/>${place.distanceKm.toFixed(1)} km${ratingHtml}`
-}
-
-function stopPopup(stop) {
-  const weatherHtml = stop.weather
-    ? `<br/>${escapeHtml(stop.weather.icon)} ${escapeHtml(stop.weather.description)}, ${Math.round(stop.weather.tempC)}°C`
-    : ''
-  return `Estimated position at ${fmtTime(stop.at)}${weatherHtml}`
-}
-
-function fmtTime(iso) {
-  return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-}
-
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))
-}
-
-function escapeAttr(s) {
-  return escapeHtml(s)
 }
